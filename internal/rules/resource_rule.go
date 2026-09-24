@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -47,6 +48,16 @@ type RulePropertiesModel struct {
 	Description types.String `tfsdk:"description"`
 	Comment     types.String `tfsdk:"comment"`
 	Disabled    types.Bool   `tfsdk:"disabled"`
+}
+
+// rulePropertiesObjectTypes returns the fixed attribute types of the `properties`
+// object so state can be built without depending on a (possibly null) prior state value.
+func rulePropertiesObjectTypes() map[string]attr.Type {
+	return map[string]attr.Type{
+		"description": types.StringType,
+		"comment":     types.StringType,
+		"disabled":    types.BoolType,
+	}
 }
 
 func (r *RuleResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -211,7 +222,7 @@ func (r *RuleResource) Create(ctx context.Context, req resource.CreateRequest, r
 		properties.Disabled = types.BoolValue(false)
 	}
 
-	propertiesObj, diags := types.ObjectValueFrom(ctx, data.Properties.AttributeTypes(ctx), properties)
+	propertiesObj, diags := types.ObjectValueFrom(ctx, rulePropertiesObjectTypes(), properties)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -254,11 +265,12 @@ func (r *RuleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	// Extract properties from state to get description for hash generation
-	var properties RulePropertiesModel
-	resp.Diagnostics.Append(data.Properties.As(ctx, &properties, basetypes.ObjectAsOptions{})...)
-	if resp.Diagnostics.HasError() {
-		return
+	// Build properties from the API response. Do NOT read them from prior state:
+	// during import the state Properties is null and .As() raises "Value Conversion Error".
+	properties := RulePropertiesModel{
+		Description: types.StringValue(rule.Extensions.Properties.Description),
+		Comment:     types.StringValue(rule.Extensions.Properties.Comment),
+		Disabled:    types.BoolValue(rule.Extensions.Properties.Disabled),
 	}
 
 	// Regenerate hash from API data
@@ -273,14 +285,20 @@ func (r *RuleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	data.APIID = types.StringValue(rule.ID)
 	data.Ruleset = types.StringValue(rule.Extensions.Ruleset)
 	data.Folder = types.StringValue(rule.Extensions.Folder)
-	data.ValueRaw = types.StringValue(rule.Extensions.ValueRaw)
+	// Checkmk re-serializes Python literals (str(dict)) and inserts whitespace
+	// that differs from the config. Only adopt the API value when it is
+	// semantically different, otherwise keep the state value to avoid a
+	// perpetual diff. Mirrors the notification-rule handling of rule_config.
+	if !valueRawSemanticEquals(data.ValueRaw.ValueString(), rule.Extensions.ValueRaw) {
+		data.ValueRaw = types.StringValue(rule.Extensions.ValueRaw)
+	}
 
 	// Update properties
 	properties.Description = types.StringValue(rule.Extensions.Properties.Description)
 	properties.Comment = types.StringValue(rule.Extensions.Properties.Comment)
 	properties.Disabled = types.BoolValue(rule.Extensions.Properties.Disabled)
 
-	propertiesObj, diags := types.ObjectValueFrom(ctx, data.Properties.AttributeTypes(ctx), properties)
+	propertiesObj, diags := types.ObjectValueFrom(ctx, rulePropertiesObjectTypes(), properties)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -379,14 +397,19 @@ func (r *RuleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		data.APIID = types.StringValue(rule.ID)
 		data.Ruleset = types.StringValue(rule.Extensions.Ruleset)
 		data.Folder = types.StringValue(rule.Extensions.Folder)
-		data.ValueRaw = types.StringValue(rule.Extensions.ValueRaw)
+		// Do NOT overwrite ValueRaw from the API response. value_raw is a
+		// Required (config-provided) attribute; Checkmk returns a re-serialized
+		// Python literal that differs only by whitespace. Adopting it here makes
+		// the post-apply value differ from the planned value and triggers
+		// "Provider produced inconsistent result after apply". Keep the planned
+		// (config) value instead, consistent with Create.
 
 		// Update properties
 		properties.Description = types.StringValue(rule.Extensions.Properties.Description)
 		properties.Comment = types.StringValue(rule.Extensions.Properties.Comment)
 		properties.Disabled = types.BoolValue(rule.Extensions.Properties.Disabled)
 
-		propertiesObj, diags := types.ObjectValueFrom(ctx, data.Properties.AttributeTypes(ctx), properties)
+		propertiesObj, diags := types.ObjectValueFrom(ctx, rulePropertiesObjectTypes(), properties)
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
