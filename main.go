@@ -36,7 +36,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "registry.terraform.io/blackmesaltd/checkmk",
+		Address: "registry.terraform.io/mcorralb/checkmk",
 		Debug:   debug,
 	}
 

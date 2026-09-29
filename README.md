@@ -39,7 +39,7 @@ The `checkmk-api-spec` repository provides:
 terraform {
   required_providers {
     checkmk = {
-      source  = "blackmesaltd/checkmk"
+      source  = "mcorralb/checkmk"
       version = "~> 0.1"
     }
   }
@@ -266,7 +266,7 @@ go test -v ./internal/provider -timeout 30m
 cat >> ~/.terraformrc <<EOF
 provider_installation {
   dev_overrides {
-    "blackmesaltd/checkmk" = "/path/to/terraform-provider-checkmk"
+    "mcorralb/checkmk" = "/path/to/terraform-provider-checkmk"
   }
   direct {}
 }

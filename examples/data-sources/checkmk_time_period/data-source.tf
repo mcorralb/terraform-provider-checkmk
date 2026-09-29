@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     checkmk = {
-      source = "blackmesaltd/checkmk"
+      source = "mcorralb/checkmk"
     }
   }
 }
