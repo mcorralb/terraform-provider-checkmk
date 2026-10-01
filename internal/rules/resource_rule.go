@@ -34,13 +34,14 @@ type RuleResource struct {
 
 // RuleResourceModel describes the resource data model.
 type RuleResourceModel struct {
-	ID         types.String `tfsdk:"id"`
-	APIID      types.String `tfsdk:"api_id"`
-	Ruleset    types.String `tfsdk:"ruleset"`
-	Folder     types.String `tfsdk:"folder"`
-	ValueRaw   types.String `tfsdk:"value_raw"`
-	Properties types.Object `tfsdk:"properties"`
-	Conditions types.Object `tfsdk:"conditions"`
+	ID          types.String `tfsdk:"id"`
+	APIID       types.String `tfsdk:"api_id"`
+	Ruleset     types.String `tfsdk:"ruleset"`
+	Folder      types.String `tfsdk:"folder"`
+	FolderIndex types.Int64  `tfsdk:"folder_index"`
+	ValueRaw    types.String `tfsdk:"value_raw"`
+	Properties  types.Object `tfsdk:"properties"`
+	Conditions  types.Object `tfsdk:"conditions"`
 }
 
 // RulePropertiesModel describes the properties nested object
@@ -99,6 +100,12 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
+			},
+			"folder_index": schema.Int64Attribute{
+				MarkdownDescription: "Read-only index of the rule within its ruleset and folder, as reported by CheckMK. " +
+					"It shifts when other rules are inserted or removed above, so it is never configurable. " +
+					"Use the `checkmk_ruleset_order` resource to control the order of the rules in a folder.",
+				Computed: true,
 			},
 			"value_raw": schema.StringAttribute{
 				MarkdownDescription: "The rule value as a raw string. Format depends on the ruleset. " +
@@ -202,17 +209,13 @@ func (r *RuleResource) Create(ctx context.Context, req resource.CreateRequest, r
 		conditions,
 	)
 
-	// Activate changes if configured
-	if err := common.TrackAndActivate(ctx, r.providerData, cfg, "rule"); err != nil {
-		common.AddActivationWarning(resp, "Rule", "created", err)
-	}
-
 	// Set computed values
 	data.ID = types.StringValue(hash)
 	data.APIID = types.StringValue(rule.ID)
 	if data.Folder.IsNull() {
 		data.Folder = types.StringValue(rule.Extensions.Folder)
 	}
+	data.FolderIndex = types.Int64Value(int64(rule.Extensions.FolderIndex))
 
 	// Update properties from API response
 	properties.Comment = types.StringValue(rule.Extensions.Properties.Comment)
@@ -236,6 +239,11 @@ func (r *RuleResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 	data.Conditions = conditionsObj
+
+	// Activate changes if configured
+	if err := common.TrackAndActivate(ctx, r.providerData, cfg, "rule"); err != nil {
+		common.AddActivationWarning(resp, "Rule", "created", err)
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -285,6 +293,7 @@ func (r *RuleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	data.APIID = types.StringValue(rule.ID)
 	data.Ruleset = types.StringValue(rule.Extensions.Ruleset)
 	data.Folder = types.StringValue(rule.Extensions.Folder)
+	data.FolderIndex = types.Int64Value(int64(rule.Extensions.FolderIndex))
 	// Checkmk re-serializes Python literals (str(dict)) and inserts whitespace
 	// that differs from the config. Only adopt the API value when it is
 	// semantically different, otherwise keep the state value to avoid a
@@ -379,11 +388,6 @@ func (r *RuleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		}
 	}
 
-	// Activate changes if configured
-	if err := common.TrackAndActivate(ctx, r.providerData, cfg, "rule"); err != nil {
-		common.AddActivationWarning(resp, "Rule", "updated", err)
-	}
-
 	// Update state with API response
 	if rule != nil {
 		// Regenerate hash from API data (in case identity fields changed)
@@ -397,6 +401,7 @@ func (r *RuleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		data.APIID = types.StringValue(rule.ID)
 		data.Ruleset = types.StringValue(rule.Extensions.Ruleset)
 		data.Folder = types.StringValue(rule.Extensions.Folder)
+		data.FolderIndex = types.Int64Value(int64(rule.Extensions.FolderIndex))
 		// Do NOT overwrite ValueRaw from the API response. value_raw is a
 		// Required (config-provided) attribute; Checkmk returns a re-serialized
 		// Python literal that differs only by whitespace. Adopting it here makes
@@ -423,6 +428,22 @@ func (r *RuleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			return
 		}
 		data.Conditions = conditionsObj
+	} else {
+		// Drift-warning path: the PUT did not return the rule. folder_index is
+		// Computed (unknown in the plan), so it must be filled with a known
+		// value before setting state.
+		fresh, fetchErr := r.providerData.Client.GetRule(ctx, data.APIID.ValueString())
+		if fetchErr != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to re-read rule after drift: %s", fetchErr))
+			return
+		}
+		data.Folder = types.StringValue(fresh.Extensions.Folder)
+		data.FolderIndex = types.Int64Value(int64(fresh.Extensions.FolderIndex))
+	}
+
+	// Activate changes if configured
+	if err := common.TrackAndActivate(ctx, r.providerData, cfg, "rule"); err != nil {
+		common.AddActivationWarning(resp, "Rule", "updated", err)
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -473,13 +494,13 @@ func (r *RuleResource) ImportState(ctx context.Context, req resource.ImportState
 
 // ValidateConfig validates the resource configuration using generated types.
 func (r *RuleResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	if r.providerData == nil {
-		return
-	}
-
 	var data RuleResourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if r.providerData == nil {
 		return
 	}
 

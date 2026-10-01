@@ -58,6 +58,7 @@ resource "checkmk_rule" "check_interval" {
 ### Read-Only
 
 - `api_id` (String) CheckMK's internal UUID for the rule. Used for updates and deletes.
+- `folder_index` (Number) Read-only index of the rule within its ruleset and folder, as reported by CheckMK. It shifts when other rules are inserted or removed above, so it is never configurable. Use the `checkmk_ruleset_order` resource to control the order of the rules in a folder.
 - `id` (String) Computed hash based on ruleset, description, and conditions. Used for identity.
 
 <a id="nestedatt--properties"></a>

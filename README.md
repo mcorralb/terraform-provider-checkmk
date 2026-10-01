@@ -1,5 +1,9 @@
 # Terraform Provider for CheckMK
 
+> **Fork**: this repository is a fork of
+> [BlackMesaLTD/terraform-provider-checkmk](https://github.com/BlackMesaLTD/terraform-provider-checkmk).
+> It is maintained and published under the `mcorralb/checkmk` namespace.
+
 A Terraform provider for managing [CheckMK](https://checkmk.com/) monitoring infrastructure as code using the CheckMK REST API.
 
 ## Features
@@ -109,9 +113,12 @@ Environment variables are also supported:
 | Resource | Description |
 |----------|-------------|
 | `checkmk_rule` | Generic rule resource for any CheckMK ruleset |
+| `checkmk_ruleset_order` | Declares and enforces the exact order of rules within a (ruleset, folder), so first-match precedence is reproducible and reordering outside Terraform is detected and corrected |
 | `checkmk_notification_rule` | Notification routing and filtering rules |
 | `checkmk_host_labels` | Host label rules |
 | `checkmk_service_labels` | Service label rules |
+
+> **Rule ordering:** `checkmk_rule` exposes `folder_index` (read-only) with the current position of a rule. For first-match rulesets (e.g. `checkgroup_parameters:*`) where the first matching rule wins, use `checkmk_ruleset_order` to declare the exact order of the rules per (ruleset, folder); any reordering done in the CheckMK UI is then detected on `plan` and corrected on `apply`.
 
 ### Rule Wrappers (Typed Resources)
 
@@ -282,3 +289,7 @@ EOF
 ## License
 
 This project is licensed under the Mozilla Public License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+This repository is a **fork** of [BlackMesaLTD/terraform-provider-checkmk](https://github.com/BlackMesaLTD/terraform-provider-checkmk).
+The `LICENSE` file is identical to the upstream one; see the upstream repository
+for its full history and original contributions.

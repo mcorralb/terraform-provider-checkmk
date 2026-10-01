@@ -48,6 +48,22 @@ type RuleUpdateRequest struct {
 	Conditions map[string]interface{} `json:"conditions"`
 }
 
+// Rule move positions supported by the CheckMK move action
+// (POST /objects/rule/{rule_id}/actions/move/invoke)
+const (
+	MovePositionTopOfFolder    = "top_of_folder"
+	MovePositionBottomOfFolder = "bottom_of_folder"
+	MovePositionBeforeRule     = "before_specific_rule"
+	MovePositionAfterRule      = "after_specific_rule"
+)
+
+// RuleMoveRequest is the request body for moving a rule within its ruleset
+type RuleMoveRequest struct {
+	Position string `json:"position"`
+	Folder   string `json:"folder,omitempty"`
+	RuleID   string `json:"rule_id,omitempty"`
+}
+
 // RuleWithETag wraps a Rule with its ETag for strict resource locking
 type RuleWithETag struct {
 	Rule *Rule
@@ -130,6 +146,39 @@ func (c *Client) UpdateRule(ctx context.Context, ruleID string, req *RuleUpdateR
 	path := fmt.Sprintf("/objects/rule/%s", ruleID)
 
 	resp, err := c.requestWithHeaders(ctx, "PUT", path, req, BuildETagHeaders(etag))
+	if err != nil {
+		return nil, err
+	}
+
+	if err := HandlePreconditionFailed(resp, "Rule", ruleID); err != nil {
+		return nil, err
+	}
+
+	// Handle 428 Precondition Required (drift detection)
+	if resp.StatusCode == 428 {
+		return nil, NewDriftError("Rule", ruleID)
+	}
+
+	if err := HandleNotFound(resp, "Rule", ruleID); err != nil {
+		return nil, err
+	}
+
+	var rule Rule
+	if err := c.handleResponse(resp, &rule); err != nil {
+		return nil, err
+	}
+
+	return &rule, nil
+}
+
+// MoveRule moves a rule to a specific location within its ruleset using the
+// CheckMK move action. If etag is provided (non-empty), it will be used in the
+// If-Match header for strict resource locking; otherwise If-Match: * is sent.
+// The API returns the serialized rule including the new folder_index.
+func (c *Client) MoveRule(ctx context.Context, ruleID string, req *RuleMoveRequest, etag string) (*Rule, error) {
+	path := fmt.Sprintf("/objects/rule/%s/actions/move/invoke", ruleID)
+
+	resp, err := c.requestWithHeaders(ctx, "POST", path, req, BuildETagHeaders(etag))
 	if err != nil {
 		return nil, err
 	}
